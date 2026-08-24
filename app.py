@@ -3,9 +3,9 @@ from supabase import create_client
 import imagehash
 from PIL import Image
 import io
-import json
-import os
 import base64
+import traceback
+import sys
 
 app = Flask(__name__)
 
@@ -27,6 +27,7 @@ def calcola_phash(img_data):
         img = Image.open(io.BytesIO(img_data))
         return str(imagehash.phash(img))
     except Exception as e:
+        print(f"ERRORE calcola_phash: {e}")
         return None
 
 # ============================================================
@@ -36,30 +37,63 @@ def calcola_phash(img_data):
 @app.route('/riconosci', methods=['POST'])
 def riconosci():
     try:
+        # 1. Log di cosa riceviamo
+        print("📥 Ricevuta richiesta POST /riconosci")
+        
+        # 2. Leggi il JSON
         data = request.get_json()
         if not data:
+            print("❌ Nessun JSON ricevuto")
             return jsonify({'errore': 'Nessun JSON ricevuto'}), 400
         
+        print(f"📦 JSON ricevuto: {list(data.keys())}")
+        
+        # 3. Controlla il campo immagine
         img_base64 = data.get('immagine')
         if not img_base64:
+            print("❌ Campo 'immagine' mancante")
             return jsonify({'errore': 'Nessuna immagine fornita'}), 400
         
-        img_data = base64.b64decode(img_base64)
-        phash = calcola_phash(img_data)
+        print(f"📊 Base64 ricevuto, lunghezza: {len(img_base64)}")
         
+        # 4. Decodifica Base64
+        try:
+            img_data = base64.b64decode(img_base64)
+            print(f"📊 Immagine decodificata, dimensione: {len(img_data)} bytes")
+        except Exception as e:
+            print(f"❌ Errore decodifica Base64: {e}")
+            return jsonify({'errore': 'Base64 non valido'}), 400
+        
+        # 5. Calcola PHASH
+        phash = calcola_phash(img_data)
         if not phash:
+            print("❌ Impossibile calcolare PHASH")
             return jsonify({'errore': 'Impossibile calcolare PHASH'}), 400
         
-        response = supabase.table("captcha_phash_py").select("cid").eq("phash", phash).execute()
+        print(f"✅ PHASH calcolato: {phash}")
         
+        # 6. Cerca in Supabase
+        try:
+            response = supabase.table("captcha_phash_py").select("cid").eq("phash", phash).execute()
+            print(f"📊 Supabase risponde: {len(response.data)} record")
+        except Exception as e:
+            print(f"❌ Errore Supabase: {e}")
+            return jsonify({'errore': f'Errore Supabase: {str(e)}'}), 500
+        
+        # 7. Restituisci risultato
         if response.data:
             cid = response.data[0]['cid']
+            print(f"✅ CID trovato: {cid}")
             return jsonify({'cid': cid, 'phash': phash})
         else:
+            print(f"⚠️ PHASH non trovato: {phash}")
             return jsonify({'cid': None, 'phash': phash})
             
     except Exception as e:
-        return jsonify({'errore': str(e)}), 500
+        # Cattura TUTTI gli errori e mostra il traceback
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"❌ ERRORE GENERALE: {error_msg}")
+        return jsonify({'errore': str(e), 'traceback': traceback.format_exc()}), 500
 
 # ============================================================
 # ENDPOINT PER SALVARE UN NUOVO CAPTCHA
@@ -91,8 +125,11 @@ def salva():
 
 @app.route('/stato', methods=['GET'])
 def stato():
-    response = supabase.table("captcha_phash_py").select("*").execute()
-    return jsonify({'totale': len(response.data), 'record': response.data})
+    try:
+        response = supabase.table("captcha_phash_py").select("*").execute()
+        return jsonify({'totale': len(response.data), 'record': response.data})
+    except Exception as e:
+        return jsonify({'errore': str(e)}), 500
 
 # ============================================================
 # ENDPOINT PER LA HOMEPAGE
