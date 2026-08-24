@@ -5,6 +5,7 @@ from PIL import Image
 import io
 import json
 import os
+import base64
 
 app = Flask(__name__)
 
@@ -24,8 +25,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 def calcola_phash(img_data):
     try:
         img = Image.open(io.BytesIO(img_data))
-        phash = str(imagehash.phash(img))
-        return phash
+        return str(imagehash.phash(img))
     except Exception as e:
         return None
 
@@ -36,22 +36,20 @@ def calcola_phash(img_data):
 @app.route('/riconosci', methods=['POST'])
 def riconosci():
     try:
-        # Ricevi l'immagine
         data = request.get_json()
-        img_base64 = data.get('immagine')
+        if not data:
+            return jsonify({'errore': 'Nessun JSON ricevuto'}), 400
         
+        img_base64 = data.get('immagine')
         if not img_base64:
             return jsonify({'errore': 'Nessuna immagine fornita'}), 400
         
-        # Decodifica Base64
         img_data = base64.b64decode(img_base64)
-        
-        # Calcola PHASH
         phash = calcola_phash(img_data)
+        
         if not phash:
             return jsonify({'errore': 'Impossibile calcolare PHASH'}), 400
         
-        # Cerca in Supabase
         response = supabase.table("captcha_phash_py").select("cid").eq("phash", phash).execute()
         
         if response.data:
@@ -59,7 +57,7 @@ def riconosci():
             return jsonify({'cid': cid, 'phash': phash})
         else:
             return jsonify({'cid': None, 'phash': phash})
-        
+            
     except Exception as e:
         return jsonify({'errore': str(e)}), 500
 
@@ -95,6 +93,22 @@ def salva():
 def stato():
     response = supabase.table("captcha_phash_py").select("*").execute()
     return jsonify({'totale': len(response.data), 'record': response.data})
+
+# ============================================================
+# ENDPOINT PER LA HOMEPAGE
+# ============================================================
+
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        'servizio': 'captcha-riconoscitore',
+        'stato': 'attivo',
+        'endpoint': {
+            '/riconosci': 'POST - Riconosce un captcha',
+            '/salva': 'POST - Salva un nuovo captcha',
+            '/stato': 'GET - Visualizza lo stato del database'
+        }
+    })
 
 # ============================================================
 # AVVIO
